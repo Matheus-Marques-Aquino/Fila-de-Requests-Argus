@@ -1,20 +1,24 @@
 const express = require('express');
 
+//Administra as sessões para consulta no Banco de Dados MongoDB
 const session = require('express-session');
 const MongoStore = require('connect-mongodb-session')(session);
 
 const dotenv = require('dotenv');
 
-const indexRoutes = require('./routes/argus-queue');
+//Adiciona as rotas de importação de lead e loop de requisições para o Argus
+const indexRoutes = require('./routes/argus-queue'); 
 
 const app = express();
 
 dotenv.config();
 
+//Impede a finalização da aplicação em caso de erro
 process.on('uncaughtException', (err) => { 
     console.error('Unhandled Exception:', err); 
 });
 
+//Configura o armazenamento de sessões no MongoDB para não ter memory leak
 const store = new MongoStore({ 
     uri: process.env.DB_URL, 
     collection: "Sessions", 

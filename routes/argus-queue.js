@@ -12,24 +12,31 @@ const mongo = new MongoConnection;
 dotenv.config();
 
 router.post('/lead-argus', async (req, res)=>{
+    //Retorna o horário de São Paulo
     const now = DateTime.now().setZone('America/Sao_Paulo');
 
+    //Variavel para armazenar o id da sessão
     var userId = req.session.userId || false;
 
     if (!userId){
+        //Caso ainda não tenha uma sessão, cria uma nova hash
         req.session.userId = mongo.generateUserId();
         userId = req.session.userId;
     }
 
+    //Verifica se o id/hash corresponde a alguma conexão com o banco
     var client = mongo.getClient(userId);
 
     if (client){
+        //Reseta a conexão ao banco de dados caso ainda esteja conectado
         await mongo.disconnect(userId);
         await mongo.connect(userId);
     }else{
+        //Cria uma nova conexão
         await mongo.connect(userId);
     }
 
+    //Armazena dados do request feito ao Argus
     const request = {
         userIp: req.ip,
         baseUrl: `${req.protocol}://${req.get('host')}${req.originalUrl}`,
@@ -40,9 +47,11 @@ router.post('/lead-argus', async (req, res)=>{
     };
 
     if ((now.hour >= 20 && now.minute >= 30) || (now.hour <= 8)){
+        //Verifica se esta dentro da faixa de horário para adicionar os requests a fila
         try{
             const RequestQueue = await mongo.getCollection(userId, 'RequestQueue');      
             
+            //Adiciona ao banco o lead para ser processado posteriormente
             await RequestQueue.insertOne({ 
                 ...request,
                 timestamp: now.toISO(),
@@ -54,13 +63,15 @@ router.post('/lead-argus', async (req, res)=>{
             console.log(error);
         }
 
-        mongo.disconnect(userId);
+        //Desconecta do banco de dados, destroi a sessão e retorna mensagem de sucesso
+        await mongo.disconnect(userId);
 
         req.session.destroy();
 
         return res.status(200).send('Lead adicionado a fila');
     }
 
+    //Em caso de não estar dentro da faixa de horário realiza a requisição para o Argus
     var response = await argusRequest(
         req.url || '/',
         req.method || 'POST',
@@ -68,6 +79,7 @@ router.post('/lead-argus', async (req, res)=>{
         req.body || {}
     );
 
+    //Armazeda dados da requisição e da resposta do Argus para serem inseridos no banco
     const payload = {
         request,
         response      
@@ -76,6 +88,7 @@ router.post('/lead-argus', async (req, res)=>{
     try{
         const ResponseList = await mongo.getCollection(userId, 'ResponseList');      
             
+        //Adiciona os dados do lead ao banco como backup
         await ResponseList.insertOne({ 
             ...payload,
             timestamp: now.toISO(),
@@ -87,6 +100,7 @@ router.post('/lead-argus', async (req, res)=>{
         console.log(error);
     }
 
+    //Desconecta do banco de dados, destroi a sessão e retorna a requisição + resposta
     mongo.disconnect(userId);
 
     req.session.destroy();
@@ -95,24 +109,31 @@ router.post('/lead-argus', async (req, res)=>{
 });
 
 router.post('/argus-lead-import', async (req, res)=>{
+    //Retorna o horário de São Paulo
     const now = DateTime.now().setZone('America/Sao_Paulo');
 
+    //Variavel para armazenar o id da sessão
     var userId = req.session.userId || false;
 
     if (!userId){
+        //Caso ainda não tenha uma sessão, cria uma nova hash
         req.session.userId = mongo.generateUserId();
         userId = req.session.userId;
     }
 
+    //Verifica se o id/hash corresponde a alguma conexão com o banco
     var client = mongo.getClient(userId);
 
     if (client){
+        //Reseta a conexão ao banco de dados caso ainda esteja conectado
         await mongo.disconnect(userId);
         await mongo.connect(userId);
     }else{
+        //Cria uma nova conexão
         await mongo.connect(userId);
     }
 
+    //Cria variavel para armazenar a lista com os leads da madrugada
     var leadList = [];
 
     try{
@@ -120,9 +141,11 @@ router.post('/argus-lead-import', async (req, res)=>{
 
         const ResponseList = await mongo.getCollection(userId, 'ResponseList');
 
+        //Recebe leads armazenados no banco
         leadList = await RequestQueue.find({ 'sent': false }).toArray();        
 
         var executeRequest = async (request) => {
+            //Faz requisição para API do Argus
             var response = await argusRequest(
                 request.url || '/', 
                 request.method || 'POST', 
@@ -130,10 +153,13 @@ router.post('/argus-lead-import', async (req, res)=>{
                 request.body || {}
             );
 
+            //Armazena _id do documento
             var documentId = request._id;
 
+            //Deleta _id do objeto request para ser armazedo de volta no banco posteriormente
             delete request._id;
         
+            //Organiza dados para serem inseridos no banco de dados como backup
             var payload = {
                 request,
                 response      
@@ -147,10 +173,12 @@ router.post('/argus-lead-import', async (req, res)=>{
                 error: false 
             });
 
+            //Deleta documento da fila de requests para não ser processado novamente
             await RequestQueue.deleteOne({ "_id": documentId });
         }
 
         var waitBetweenRequest = async (ms) => {
+            //Serve somente para dar tempo entre requisições feitas à API do Argus
             return new Promise((resolve, reject)=>{
                 setTimeout(resolve, ms);
             });
@@ -158,23 +186,29 @@ router.post('/argus-lead-import', async (req, res)=>{
 
         var requestLoop = async () => {
             if (leadList[0]){
+                //Executa requisição para API do Argus
                 await executeRequest(leadList[0]);
 
                 console.log(leadList[0]);
 
+                //Remove a requisição da lista
                 leadList.shift();
 
+                //Aguarda 500ms para executar próxima requisição
                 await waitBetweenRequest(500);
+                //Roda a função novamente até que leadList esteja vazia
                 await requestLoop();
             }
         }
 
+        //Inicia o loop para fazer todas requisições
         await requestLoop();
 
     }catch(error){
         console.log(error);
     }
     
+    //Desconecta do banco de dados, destroi a sessão
     mongo.disconnect(userId);
 
     req.session.destroy();
@@ -183,12 +217,14 @@ router.post('/argus-lead-import', async (req, res)=>{
 });
 
 async function argusRequest(url, method, headers, data){
+    //Array com headers aceitos para serem enviados com a requisição para a API do Argus
     const enabledHeaders = [
         'authorization', 
         'content-type',
         'accept'
     ];
 
+    //Objeto com os headers da requisição
     var requestReaders = {};
 
     for(let header in headers){
@@ -196,12 +232,14 @@ async function argusRequest(url, method, headers, data){
         let key = header.toLowerCase();
         
         if (!enabledHeaders.includes(key)){
+            //Caso não esteja entre os headers aceitos pula para próximo
             continue;
         }
-
+    
         requestReaders[header] = value;
     }
 
+    //Configura options do axios para fazer a requisição ao Argus
     const options = {
         baseURL: process.env.ARGUS_ENDPOINT,
         url: '/', //url,
@@ -223,6 +261,7 @@ async function argusRequest(url, method, headers, data){
                     data
                 } = res;
 
+                //Formata resposta para trabalhar nas outras etapas
                 response = {
                     baseURL: baseURL || "",
                     url: url || "",
@@ -267,10 +306,12 @@ async function argusRequest(url, method, headers, data){
                 method = method.toString().toUpperCase();                
 
                 try{ 
+                    //Em caso do error JSON.parse retornar erro não causa problemas ao código 
                     data = data || "{}";
                     data = JSON.parse(data); 
                 }catch(e){}                                
 
+                //Formata resposta para trabalhar nas outras etapas
                 response = {
                     code,
                     status,
@@ -290,6 +331,7 @@ async function argusRequest(url, method, headers, data){
         response = err;
     }
 
+    //Retorna resposta da requisição
     return response;
 }
 

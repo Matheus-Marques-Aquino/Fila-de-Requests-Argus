@@ -10,6 +10,7 @@ class MongoConnection {
         this.connections = new Map();
     }
 
+    //Criar uma hash aleatória para utilizar identificar cada nova sessão
     generateUserId(){
         let userId = '';
         
@@ -20,6 +21,7 @@ class MongoConnection {
         return userId.toUpperCase();
     }
 
+    //Cria uma conaxão ao banco
     async connect(userId) {
         const client = new MongoClient(process.env.DB_URL, {
             connectTimeoutMS: 30000,
@@ -40,6 +42,7 @@ class MongoConnection {
         return client;
     }
 
+    //Finaliza uma sessão e desconecta do banco de daos
     async disconnect(userId) {
         const client = this.connections.get(userId);
 
@@ -56,14 +59,17 @@ class MongoConnection {
         }
     }
 
+    //Retorna o client da sessão caso ainda esteja conectado ao banco
     getClient(userId) {
         return this.connections.get(userId);
     }
 
+    //Retorna todas as conexões ao banco
     getConnectedUsers() {
         return Array.from(this.connections.keys());
     }
 
+    //Retorna o banco de dados
     async getDatabase(userId) {
         const client = this.getClient(userId);
 
@@ -74,6 +80,7 @@ class MongoConnection {
         return null;
     }
 
+    //Retorna a Collection para realizar consultas ou adicionar documentos
     async getCollection(userId, collectionName) {
         const db = await this.getDatabase(userId, database);
 

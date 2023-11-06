@@ -40,3 +40,5 @@ app.use('/', indexRoutes);
 const port = 8080;
 
 app.listen(port, () => { console.log(`Servidor rodando na porta ${port}`); });
+
+//gcloud functions deploy argus-sleep-function --runtime nodejs18 --trigger-http --entry-point app
